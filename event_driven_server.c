@@ -25,6 +25,9 @@ struct ioRequest{
 	int lastRequestFlag; // 0 if it is an intermediate request and 1 if is the last request
 	char * buf;
 	int sockfd; // stores the client socket connfd
+	struct aiocb * aiocbList; // used so that the structure can be freed to save up memory
+	struct aiocb * aioInstance;
+	struct ioRequest * start; // used to free up space
 };
 /* Handler for SIGQUIT */
 static void quitHandler(int sig){
@@ -57,7 +60,10 @@ static void aioSigHandler(int sig, siginfo_t *si, void *ucontext){
 	    	printf("data sent\n");
 	    }
 	}
+	close(io->aioInstance->aio_fildes);
+	free(io->aiocbList);
 	free(io->buf);
+	free(io->start);
     close(io->sockfd);
 }
 
@@ -145,7 +151,7 @@ int main (){
 		}
 		
 		for(int i=0;i<x;i++){
-			printf("INSIDE FOR i=%d\n",i);
+			// printf("INSIDE FOR i=%d\n",i);
 			if(evlist[i].events & (EPOLLIN | EPOLLOUT)){
 				if(evlist[i].data.fd==server_socket){
 					// add the new user
@@ -164,14 +170,21 @@ int main (){
 				}
 				else{	
 					// assuming that it is a GET reqest from httperf or anywhere else :P
+					// printf("INSIDE ELSE\n");
 					int bytesRead=0;
 					FILE * fp=fopen("sampleFile","r");
+					if(fp==NULL){
+						perror("fopen");
+						exit(0);
+					}	
 					fseek(fp,0, SEEK_END);
 					int fSize=ftell(fp);
 					fseek(fp,0,SEEK_SET);
+					fclose(fp);
 					char * buffer=(char *)malloc(sizeof(char)*(fSize+10));
 					memset(buffer,'\0',fSize+10);
 					// for each request, an aiocb structure is needed
+					
 					int numReqs;
 					printf("FILE SIZE %d\n",fSize);
 					if(fSize % buf_size == 0)
@@ -185,13 +198,16 @@ int main (){
 					int j=0;
 					int filefd=open("sampleFile",O_RDONLY);
 					while(numReqs > 0){
+						// printf("HERE F\n");
 						if(numReqs==1)
 							ioList[j].lastRequestFlag=1;
 						else
 							ioList[j].lastRequestFlag=0;
 						ioList[j].buf = buffer;
 						ioList[j].sockfd = evlist[i].data.fd;
-						
+						ioList[j].aiocbList = aiocbList;
+						ioList[j].aioInstance = &aiocbList[j];
+						ioList[j].start = ioList;
 						aiocbList[j].aio_fildes = filefd;
 						aiocbList[j].aio_offset = bytesRead;
 						aiocbList[j].aio_buf = buffer + bytesRead;
