@@ -26,45 +26,51 @@ struct ioRequest{
 	char * buf;
 	int sockfd; // stores the client socket connfd
 	struct aiocb * aiocbList; // used so that the structure can be freed to save up memory
-	struct aiocb * aioInstance;
+	struct aiocb * aioInstance; // used to close the corresponding file descriptor
 	struct ioRequest * start; // used to free up space
 };
 /* Handler for SIGQUIT */
 static void quitHandler(int sig){
     gotSIGQUIT = 1;
 }
-
+int aloha=0;
 /* Handler for I/O completion signal */
 static void aioSigHandler(int sig, siginfo_t *si, void *ucontext){
 	// printf("signal received \n");
-	struct ioRequest * io = si->si_value.sival_ptr;
+	if(sig == SIGRTMIN +1){
+			struct ioRequest * io = si->si_value.sival_ptr;
 
-    // send the data
-    // free the buffer;
-    if(io->lastRequestFlag == 1){
-	    char str[strlen(io->buf)+100];
-	    memset(str,'\0',sizeof(str));
-	    sprintf(str,"HTTP/1.1 200 OK\r\n"
-	    			"Content-Length: %d\r\n"
-	    			"Content-Type: text/html\r\n"
-	    			"\r\n"
-	    			"%s\r\n"
-	    			"\r\n",(int)strlen(io->buf),io->buf);
+		    // send the data
+		    // free the buffer;
+		    if(io->lastRequestFlag == 1){
+			    char str[strlen(io->buf)+100];
+			    memset(str,'\0',sizeof(str)); // not listed as a safe function to call inside a signal handler
+			    sprintf(str,"HTTP/1.1 200 OK\r\n" // not listed as a safe function to call inside a signal handler
+			    			"Content-Length: %d\r\n"
+			    			"Content-Type: text/html\r\n"
+			    			"\r\n"
+			    			"%s\r\n"
+			    			"\r\n",(int)strlen(io->buf),io->buf);
 
-	   	int k=send(io->sockfd,str,strlen(str)+1,0);
-	    if(k!=strlen(str)+1){
-	    	printf("problem in sending. %d bytes sent.\n", k);
-	    	perror("send2");
-	    }
-	    else{
-	    	printf("data sent\n");
-	    }
-	}
-	close(io->aioInstance->aio_fildes);
-	free(io->aiocbList);
-	free(io->buf);
-	free(io->start);
-    close(io->sockfd);
+			   	// printf("%s\n",str );
+			   	int k=send(io->sockfd,str,strlen(str)+1,0);
+			    if(k!=strlen(str)+1){
+			    	// printf("problem in sending. %d bytes sent.\n", k);
+			    	// perror("send2");
+			    }
+			    else{
+			    	// printf("data sent %d\n",aloha++);
+			    }
+			}
+			
+			close(io->aioInstance->aio_fildes);
+			// sending a large amount of data through send call was taking time
+		    // by that time program control came to close stmt and closed the connection
+		    // thereby causing the application to not send the whole data.
+		    // Therefore, keep the close call commented for large data (>= 1 MB)
+		    close(io->sockfd); 
+		}
+	
 }
 
 int main (){
@@ -81,7 +87,7 @@ int main (){
 
     sa.sa_flags = SA_RESTART | SA_SIGINFO;
     sa.sa_sigaction = aioSigHandler;
-    if (sigaction(IO_SIGNAL, &sa, NULL) == -1)
+    if (sigaction(SIGRTMIN +1, &sa, NULL) == -1)
         errExit("sigaction");
 
 	/*CREATE A TCP SOCKET*/
@@ -151,9 +157,10 @@ int main (){
 		}
 		
 		for(int i=0;i<x;i++){
-			// printf("INSIDE FOR i=%d\n",i);
+			printf("INSIDE FOR i=%d\n",i);
 			if(evlist[i].events & (EPOLLIN | EPOLLOUT)){
 				if(evlist[i].data.fd==server_socket){
+					printf("INSIDE IF\n");
 					// add the new user
 					int connfd=accept(server_socket, (struct sockaddr *)&client_address,&client_length);
 					if(connfd==-1){
@@ -170,7 +177,7 @@ int main (){
 				}
 				else{	
 					// assuming that it is a GET reqest from httperf or anywhere else :P
-					// printf("INSIDE ELSE\n");
+					printf("INSIDE ELSE\n");
 					int bytesRead=0;
 					FILE * fp=fopen("sampleFile","r");
 					if(fp==NULL){
@@ -199,6 +206,9 @@ int main (){
 					int filefd=open("sampleFile",O_RDONLY);
 					while(numReqs > 0){
 						// printf("HERE F\n");
+						memset(&ioList[j],0,sizeof(struct ioRequest));
+						memset(&aiocbList[j],0,sizeof(struct aiocb));
+						// printf("1\n");
 						if(numReqs==1)
 							ioList[j].lastRequestFlag=1;
 						else
@@ -218,13 +228,14 @@ int main (){
 							aiocbList[j].aio_sigevent.sigev_notify = SIGEV_SIGNAL;
 						else
 							aiocbList[j].aio_sigevent.sigev_notify = SIGEV_NONE;
-						aiocbList[j].aio_sigevent.sigev_signo = IO_SIGNAL;
+						aiocbList[j].aio_sigevent.sigev_signo = SIGRTMIN +1;
 						aiocbList[j].aio_sigevent.sigev_value.sival_ptr = &ioList[j];
+						// printf("2\n");
 						int r=aio_read(&aiocbList[j]);
 						if(r==-1)
 							errExit("aio_read");
 						else{
-							printf("%d bytes queued\n", buf_size);
+							// printf("%d bytes queued\n", buf_size);
 							bytesRead+=buf_size;
 						}
 						numReqs--;
