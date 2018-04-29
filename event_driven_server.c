@@ -12,12 +12,10 @@
 
 #define MAXPENDING 10
 #define buf_size 100 // to read data from file using aio
-#define MAX_EVENTS 500
+#define MAX_EVENTS 1000
 #define IO_SIGNAL SIGUSR1 
 
 #define errExit(msg) do { perror(msg); exit(EXIT_FAILURE); } while (0)
-
-#define errMsg(msg)  do { perror(msg); } while (0)
 
 int gotSIGQUIT;
 
@@ -33,50 +31,47 @@ struct ioRequest{
 static void quitHandler(int sig){
     gotSIGQUIT = 1;
 }
-int aloha=0;
+
 /* Handler for I/O completion signal */
 static void aioSigHandler(int sig, siginfo_t *si, void *ucontext){
-	// printf("signal received \n");
 	if(sig == SIGRTMIN +1){
-			struct ioRequest * io = si->si_value.sival_ptr;
+		struct ioRequest * io = si->si_value.sival_ptr;
 
-		    // send the data
-		    // free the buffer;
-		    if(io->lastRequestFlag == 1){
-			    char str[strlen(io->buf)+100];
-			    memset(str,'\0',sizeof(str)); // not listed as a safe function to call inside a signal handler
-			    sprintf(str,"HTTP/1.1 200 OK\r\n" // not listed as a safe function to call inside a signal handler
-			    			"Content-Length: %d\r\n"
-			    			"Content-Type: text/html\r\n"
-			    			"\r\n"
-			    			"%s\r\n"
-			    			"\r\n",(int)strlen(io->buf),io->buf);
+	    // send the data
+	    // free the buffer;
+	    if(io->lastRequestFlag == 1){
+		    char str[strlen(io->buf)+100];
+		    // memset(str,'\0',sizeof(str)); // not listed as a safe function to call inside a signal handler
+		    sprintf(str,"HTTP/1.1 200 OK\r\n" // not listed as a safe function to call inside a signal handler
+		    			"Content-Length: %d\r\n"
+		    			"Content-Type: text/html\r\n"
+		    			"\r\n"
+		    			"%s\r\n"
+		    			"\r\n",(int)strlen(io->buf),io->buf);
 
-			   	// printf("%s\n",str );
-			   	int k=send(io->sockfd,str,strlen(str)+1,0);
-			    if(k!=strlen(str)+1){
-			    	// printf("problem in sending. %d bytes sent.\n", k);
-			    	// perror("send2");
-			    }
-			    else{
-			    	// printf("data sent %d\n",aloha++);
-			    }
-			}
-			
-			close(io->aioInstance->aio_fildes);
-			// sending a large amount of data through send call was taking time
-		    // by that time program control came to close stmt and closed the connection
-		    // thereby causing the application to not send the whole data.
-		    // Therefore, keep the close call commented for large data (>= 1 MB)
-		    close(io->sockfd); 
+		   	// printf("%s\n",str );
+		   	int k=send(io->sockfd,str,strlen(str)+1,0);
+		    if(k!=strlen(str)+1){
+		    	// printf("problem in sending. %d bytes sent.\n", k);
+		    	// perror("send2");
+		    }
+		    else{
+		    	// printf("data sent\n");
+		    }
 		}
+		
+		close(io->aioInstance->aio_fildes);
+		// sending a large amount of data through send call was taking time
+	    // by that time program control came to close stmt and closed the connection
+	    // thereby causing the application to not send the whole data.
+	    // Therefore, keep the close call commented for large data (>= 1 MB)
+	    close(io->sockfd); 
+	}
 	
 }
 
 int main (){
 
-	// struct ioRequest *ioList=(struct ioRequest *)malloc(sizeof());
- //    struct aiocb *aiocbList;
     struct sigaction sa;
     sa.sa_flags = SA_RESTART;
     sigemptyset(&sa.sa_mask);
@@ -153,14 +148,14 @@ int main (){
 			}
 		}
 		else{
-			printf("NO ERROR\n");
+			// printf("NO ERROR\n");
 		}
 		
 		for(int i=0;i<x;i++){
-			printf("INSIDE FOR i=%d\n",i);
+			// printf("INSIDE FOR i=%d\n",i);
 			if(evlist[i].events & (EPOLLIN | EPOLLOUT)){
 				if(evlist[i].data.fd==server_socket){
-					printf("INSIDE IF\n");
+					// printf("INSIDE IF\n");
 					// add the new user
 					int connfd=accept(server_socket, (struct sockaddr *)&client_address,&client_length);
 					if(connfd==-1){
@@ -174,14 +169,17 @@ int main (){
 						perror("epoll_ctl2");
 						exit(0);
 					}
+					printf("New Connection Established with connfd as %d\n",connfd );
+
 				}
 				else{	
 					// assuming that it is a GET reqest from httperf or anywhere else :P
-					printf("INSIDE ELSE\n");
+					// printf("INSIDE ELSE\n");
 					int bytesRead=0;
 					FILE * fp=fopen("sampleFile","r");
 					if(fp==NULL){
 						perror("fopen");
+						printf("A file is required from which data can be read and sent to the client.\n");
 						exit(0);
 					}	
 					fseek(fp,0, SEEK_END);
@@ -249,6 +247,8 @@ int main (){
 						perror("epoll_ctl3");
 						// exit(0);
 					}
+					// for multiple get requests, 
+					// the evlist[i].data.fd can be added to epoll after the io is over completely.
 				}
 			}
 		}
